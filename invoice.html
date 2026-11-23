@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Invoice Generator</title>
+<script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+<style>
+body{font-family:Arial;margin:20px;background:#f5f5f5}
+.card{background:#fff;padding:15px;border-radius:8px;margin-bottom:15px;box-shadow:0 2px 5px #0001}
+input,textarea{width:100%;padding:6px;margin:4px 0}
+.row{display:flex;gap:10px}.row>div{flex:1}
+table{width:100%;border-collapse:collapse;margin-top:8px}
+th,td{border:1px solid #ddd;padding:6px;text-align:left}
+button{padding:8px 12px;margin:5px 5px 0 0;border:0;border-radius:5px;cursor:pointer;background:#2563eb;color:#fff}
+button.gray{background:#555}
+#invoice{background:#fff;padding:25px;border-radius:8px}
+@media print{body *{visibility:hidden}#invoice,#invoice *{visibility:visible}#invoice{position:absolute;top:0;left:0;width:100%}}
+</style>
+</head>
+<body>
+
+<div class="card">
+  <h3>Invoice Details</h3>
+  <div class="row">
+    <div><input id="from" placeholder="From / Seller"></div>
+    <div><input id="to" placeholder="Bill To / Customer"></div>
+  </div>
+  <div class="row">
+    <div><input id="invNo" placeholder="Invoice No."></div>
+    <div><input id="date" type="date"></div>
+  </div>
+  <div class="row">
+    <div><input id="tax" type="number" value="0" placeholder="Tax %"></div>
+    <div><input id="notes" placeholder="Notes"></div>
+  </div>
+
+  <h4>Items</h4>
+  <div id="items"></div>
+  <button class="gray" id="addItem">+ Add Item</button>
+
+  <br>
+  <button id="printBtn">Print / Save as PDF</button>
+  <button class="gray" id="exportJson">Export JSON</button>
+  <button class="gray" id="importJson">Import JSON</button>
+  <button class="gray" id="exportXml">Export XML</button>
+  <button class="gray" id="importXml">Import XML</button>
+  <input type="file" id="fileInput" accept=".json,.xml" hidden>
+</div>
+
+<div id="invoice"></div>
+
+<script>
+let items=[];
+
+function render(){
+  let subtotal=0;
+  let rows=items.map((x,i)=>{
+    const total=(+x.qty||0)*(+x.price||0);
+    subtotal+=total;
+    return `<tr><td>${x.name}</td><td>${x.qty}</td><td>${x.price}</td><td>${total.toFixed(2)}</td>
+    <td><button onclick="removeItem(${i})">X</button></td></tr>`;
+  }).join("");
+
+  const taxRate=+$("#tax").val()||0;
+  const taxAmount=subtotal*taxRate/100;
+  const total=subtotal+taxAmount;
+
+  $("#invoice").html(`
+    <h2>INVOICE</h2>
+    <p><b>Invoice No:</b> ${$("#invNo").val()}<br>
+    <b>Date:</b> ${$("#date").val()}</p>
+    <p><b>From:</b> ${$("#from").val()}<br><b>Bill To:</b> ${$("#to").val()}</p>
+    <table><tr><th>Item</th><th>Qty</th><th>Price</th><th>Total</th><th></th></tr>${rows}</table>
+    <p><b>Subtotal:</b> ${subtotal.toFixed(2)}<br>
+    <b>Tax (${taxRate}%):</b> ${taxAmount.toFixed(2)}<br>
+    <h3>Total: ${total.toFixed(2)}</h3></p>
+    <p>${$("#notes").val()}</p>`);
+
+  $("#items").html(items.map((x,i)=>`
+    <div class="row">
+      <div><input value="${x.name}" oninput="setItem(${i},'name',this.value)" placeholder="Item"></div>
+      <div><input type="number" value="${x.qty}" oninput="setItem(${i},'qty',this.value)" placeholder="Qty"></div>
+      <div><input type="number" value="${x.price}" oninput="setItem(${i},'price',this.value)" placeholder="Price"></div>
+    </div>`).join(""));
+}
+
+function setItem(i,k,v){items[i][k]=v;render()}
+function removeItem(i){items.splice(i,1);render()}
+$("#addItem").click(()=>{items.push({name:"",qty:1,price:0});render()});
+
+$("#printBtn").click(()=>window.print());
+
+function download(name,text,type){
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([text],{type}));
+  a.download=name;a.click();
+}
+
+$("#exportJson").click(()=>download("invoice.json",JSON.stringify(getData(),null,2),"application/json"));
+
+$("#exportXml").click(()=>{
+  const d=getData();
+  const xml=`<invoice><from>${d.from}</from><to>${d.to}</to><number>${d.invNo}</number><date>${d.date}</date><tax>${d.tax}</tax><notes>${d.notes}</notes><items>${items.map(i=>`<item><name>${i.name}</name><qty>${i.qty}</qty><price>${i.price}</price></item>`).join("")}</items></invoice>`;
+  download("invoice.xml",xml,"application/xml");
+});
+
+function getData(){
+  return{from:$("#from").val(),to:$("#to").val(),invNo:$("#invNo").val(),date:$("#date").val(),tax:$("#tax").val(),notes:$("#notes").val(),items};
+}
+
+$("#importJson,#importXml").click(()=>$("#fileInput").click());
+$("#fileInput").change(function(){
+  const file=this.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=e=>{
+    if(file.name.endsWith(".json")){
+      const d=JSON.parse(e.target.result);apply(d);
+    }else{
+      const xml=$.parseXML(e.target.result),$x=$(xml);
+      apply({
+        from:$x.find("from").text(),to:$x.find("to").text(),
+        invNo:$x.find("number").text(),date:$x.find("date").text(),
+        tax:$x.find("tax").text(),notes:$x.find("notes").text(),
+        items:$x.find("item").map((_,el)=>({
+          name:$(el).find("name").text(),
+          qty:$(el).find("qty").text(),
+          price:$(el).find("price").text()
+        })).get()
+      });
+    }
+  };
+  reader.readAsText(file);
+});
+
+function apply(d){
+  $("#from").val(d.from);$("#to").val(d.to);$("#invNo").val(d.invNo);
+  $("#date").val(d.date);$("#tax").val(d.tax);$("#notes").val(d.notes);
+  items=d.items||[];render();
+}
+
+$("input").on("input",render);
+$("#addItem").click();render();
+</script>
+</body>
+</html>
